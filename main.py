@@ -1,46 +1,39 @@
-from sklearn.metrics.pairwise import cosine_similarity
+from tools import cosine_similarity, clean_text
 from embeddings import Embeddings
 import plotly.graph_objects as go
-from constants import RESULT_SIZE
 import streamlit as st
 import numpy as np
 import PyPDF2
-import re
 
-embedding = Embeddings()
+# Configuración inicial de la página
+st.set_page_config(page_title="Embedding Visualizer", layout="wide")
 
-def clean_text(pdf_text):
-    pdf_text = pdf_text.replace('\n', ' ')
-    pdf_text = re.sub(r'\s+', ' ', pdf_text)
-    pdf_text = pdf_text.strip()
-
-    pdf_text = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚüÜ\s.,;:¡¿]+', ' ', pdf_text)
-    return pdf_text
-
+# Instancia de Embeddings
 def draw_plot(embeddings, chunks, indexes):
-    # Extraer las coordenadas X, Y, Z de los embeddings
+    """Dibuja una gráfica 3D de embeddings usando Plotly."""
+    
+    if not embeddings:
+        st.warning("No hay embeddings para visualizar.")
+        return
+
     X = np.array([embedding[0] for embedding in embeddings])
     Y = np.array([embedding[1] for embedding in embeddings])
     Z = np.array([embedding[2] for embedding in embeddings])
 
+    # Asignación de colores
     color = ['black' if i not in indexes else 'green' for i in range(len(embeddings))]
-    color[-1] = 'red'
+    if len(color) > 0:
+        color[-1] = 'red'
 
-    # Crear la gráfica 3D con Plotly
+    # Crear figura 3D con Plotly
     fig = go.Figure(data=[go.Scatter3d(
-        x=X.flatten(), 
-        y=Y.flatten(), 
+        x=X.flatten(),
+        y=Y.flatten(),
         z=Z.flatten(),
         mode='markers',
-        marker=dict(
-            size=6, 
-            color=color, 
-            opacity=0.6
-        ),
+        marker=dict(size=6, color=color, opacity=0.6),
         text=[chunks[i] for i in range(len(chunks))],
-        hovertemplate='X: %{x}<br>' + 
-            'Y: %{y}<br>' +
-            'Z: %{z}<br>'
+        hovertemplate='X: %{x}<br>Y: %{y}<br>Z: %{z}<br>'
     )])
 
     fig.update_layout(
@@ -49,62 +42,76 @@ def draw_plot(embeddings, chunks, indexes):
             yaxis=dict(title='Y'),
             zaxis=dict(title='Z')
         ),
-        title='Visualización 3D de Embeddings',
+        title="Visualización 3D de Embeddings",
         margin=dict(l=0, r=0, b=0, t=40)
     )
-    
+
     st.plotly_chart(fig)
 
-def calculate_nearest_point(embeddings):
-    points = embeddings[0:-2]
-    text = embeddings[-1]
-
-    res = [cosine_similarity([point], [text])[0][0] for point in points]
-
-    points_with_similarity = list(zip(points, res))
-
-    sorted_points = [point for point, _ in sorted(points_with_similarity, key=lambda x: x[1], reverse=True)]
-
-    indexes = []
-    for p in sorted_points[0:RESULT_SIZE]:
-        indexes.append(embeddings.index(p))
-    return indexes
-
-
 def procesar_datos(pdf_file, texto):
-    if pdf_file is not None:
-        st.success(f"Archivo PDF recibido: {pdf_file.name}")
-        try:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            pdf_text = '\n'.join([page.extract_text() for page in pdf_reader.pages])
-            pdf_text = clean_text(pdf_text)
-            st.text_area("Texto extraído del PDF", pdf_text)
-        except Exception as e:
-            st.exception(e)
-    else:
-        st.warning("No se subió ningún archivo PDF.")
-    
-    if texto:
-        st.success(f"Texto ingresado: {texto}")
-    else:
-        st.warning("No se ha escrito texto.")
+    """Procesa los datos del PDF y del texto ingresado."""
 
+    pdf_text = ""
+
+    # Procesar archivo PDF
+    if pdf_file is not None:
+        with st.spinner("Procesando PDF..."):
+            st.success(f"📄 Archivo PDF recibido: **{pdf_file.name}**")
+            try:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                pdf_text = '\n'.join([page.extract_text() or "" for page in pdf_reader.pages])
+                pdf_text = clean_text(pdf_text)
+                
+                with st.expander("📃 Texto extraído del PDF"):
+                    st.text_area("Texto del PDF", pdf_text, height=200)
+                    
+            except Exception as e:
+                st.error("❌ Error al procesar el PDF")
+                st.exception(e)
+    else:
+        st.warning("⚠ No se subió ningún archivo PDF.")
+
+    # Procesar texto ingresado
+    if texto:
+        st.success(f"📝 Texto ingresado: **{texto}...**")
+    else:
+        st.warning("⚠ No se ha ingresado texto.")
+
+    # Generar embeddings y graficar
     try:
-        embeddings , chunks = embedding.get_embedding_and_chunks(pdf_text, texto)
+        embeddings, chunks = embedding.get_embedding_and_chunks(pdf_text, texto, chunk_size, chunk_overlap)
         embeddings = embeddings.tolist()
-        chunks.append(texto)
-        indexes = calculate_nearest_point(embeddings)
-        for index in indexes:
-            st.text(chunks[index])
+        if texto:
+            chunks.append(texto)
+
+        if not embeddings:
+            st.warning("⚠ No se generaron embeddings.")
+            return
+
+        indexes = cosine_similarity(embeddings, result_size)
+
+        with st.expander("📌 Resultados de similitud"):
+            for index in indexes:
+                st.markdown(f"- **{chunks[index]}**")
+
         draw_plot(embeddings, chunks, indexes)
+    
     except Exception as e:
+        st.error("❌ Error al calcular embeddings.")
         st.exception(e)
 
-st.title("Embedding Visualizer")
+# ------------------------- UI -------------------------
+st.title("📊 Embedding Visualizer")
 
-pdf_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+# Sidebar para subir archivos y escribir texto
+st.sidebar.header("📂 Entrada de Datos")
+pdf_file = st.sidebar.file_uploader("📎 Sube un archivo PDF", type=["pdf"])
+texto = st.sidebar.text_area("✍ Introduce un texto", placeholder="Escribe aquí...")
+chunk_size = st.sidebar.number_input("Tamaño de los chunks", min_value=1, value=200)
+chunk_overlap = st.sidebar.number_input("Superposición de los chunks", min_value=0, value=50)
+result_size = st.sidebar.number_input("Número de resultados", min_value=1, value=5)
 
-texto = st.text_area("Introduce a text")
+embedding = Embeddings()
 
-if st.button("Enviar"):
+if st.sidebar.button("🚀 Analizar"):
     procesar_datos(pdf_file, texto)

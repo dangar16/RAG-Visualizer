@@ -1,4 +1,3 @@
-from constants import CHUNK_OVERLAP, CHUNK_SIZE
 from sklearn.decomposition import PCA
 from dotenv import load_dotenv
 import numpy as np
@@ -34,12 +33,12 @@ class Embeddings:
         except requests.exceptions.RequestException as e:
             return {"error": str(e)}
     
-    def get_embedding_and_chunks(self, pdf_text, texto):
+    def get_embedding_and_chunks(self, pdf_text, texto, chunk_size, chunk_overlap):
         """
         Args:
             pdf_text (str): Texto extraído de un PDF.
         """
-        chunks = self.get_chunks(pdf_text)
+        chunks = self.get_chunks(pdf_text, chunk_size, chunk_overlap)
         embeddings = [self.get_embeddings(chunk) for chunk in chunks]
         embeddings.append(self.get_embeddings(texto))
         array = np.array(embeddings)
@@ -47,7 +46,7 @@ class Embeddings:
         pca_result = self.pca.fit_transform(array)
         return pca_result, chunks
     
-    def get_chunks(self, pdf_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    def get_chunks(self, pdf_text, chunk_size, overlap):
         """
         Divide el texto extraído de un PDF en fragmentos más pequeños llamados chunks.
 
